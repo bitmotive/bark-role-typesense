@@ -1,0 +1,3 @@
+---
+# defaults file for typesense-role
+typesense_service_port: 8108

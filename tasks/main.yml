@@ -1,0 +1,86 @@
+---
+# ROLE: Typesense
+#
+# DESCRIPTION:
+# This role installs Typesense service 
+
+###############################################################################
+################### VARIABLE INITIALIZATION & TASK SETUP ######################
+###############################################################################
+
+- name: TYPESENSE_SERVICE_PORT prompt user input if unset
+  pause:
+    prompt: "SET TYPESENSE_SERVICE_PORT"
+    echo: yes
+  register: input
+  when: TYPESENSE_SERVICE_PORT is not defined
+
+- name: Set TYPESENSE_SERVICE_PORT fact
+  set_fact:
+    TYPESENSE_SERVICE_PORT: "{{ input.user_input }}"
+  when: TYPESENSE_SERVICE_PORT is not defined
+
+# This is needed to save .deb file
+- name: Set user home directory
+  set_fact:
+    user_home: "{{ ansible_user_dir | default(lookup('env', 'HOME')) }}"
+
+###############################################################################
+############################ ROLE IMPLEMENTATION ##############################
+###############################################################################
+
+- name: Check if Typesense is already installed
+  command: dpkg-query -W -f='${Status}' typesense-server
+  register: typesense_check
+  failed_when: false
+  changed_when: false
+
+- name: Display Typesense installation status. End play if already installed.
+  block:
+    - debug:
+        msg: "Typesense is already installed on host"
+    - meta: end_play
+  when: typesense_check.stdout.find('install ok installed') != -1
+
+- name: Determine system architecture
+  command: uname -m
+  register: architecture
+  changed_when: false
+
+- name: Download Typesense package
+  get_url:
+    url: "https://dl.typesense.org/releases/27.0/typesense-server-27.0-{{ 'amd64' if architecture.stdout == 'x86_64' else 'arm64' }}.deb"
+    dest: "{{ user_home }}/typesense-server.deb"
+  become: yes
+
+- name: Install Typesense
+  apt:
+    deb: "{{ user_home }}/typesense-server.deb"
+    state: present
+  become: yes
+
+- name: Start Typesense service
+  systemd:
+    name: typesense-server
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Wait for Typesense to be ready
+  uri:
+    url: "http://localhost:{{ TYPESENSE_SERVICE_PORT }}/health"
+    method: GET
+  register: health_check
+  until: health_check.status == 200
+  retries: 3
+  delay: 3
+
+- name: Read Typesense configuration file
+  command: cat /etc/typesense/typesense-server.ini
+  register: typesense_config
+  changed_when: false
+  become: yes
+
+- name: Display Typesense configuration
+  debug:
+    var: typesense_config.stdout_lines
